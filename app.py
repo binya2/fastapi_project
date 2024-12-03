@@ -1,106 +1,105 @@
 from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import Column, String, create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
 import random
 
-# FastAPI app
+# FastAPI app initialization
 app = FastAPI()
 
-# Database setup
-DATABASE_URL = "sqlite:///db.sqlite"
-Base = declarative_base()
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# Database setup (SQLite)
+SQLALCHEMY_DATABASE_URL = "sqlite:///./db.sqlite"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
-
-# Models
+# Define the User model
 class User(Base):
-    __tablename__ = "users"
-    email = Column(String(120), primary_key=True, nullable=False, unique=True)
-    username = Column(String(50), nullable=False)
-    password = Column(String(255), nullable=False)
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, index=True)
+    email = Column(String, index=True, unique=True)
+    password = Column(String)
 
-
-# Create tables in the database
+# Create tables if they don't exist
 Base.metadata.create_all(bind=engine)
 
-
-# Pydantic models for request and response
+# Pydantic model for user input validation
 class UserCreate(BaseModel):
-    username: str = Field(..., max_length=50)
+    username: str
     email: EmailStr
     password: str
 
     class Config:
         orm_mode = True
 
-
-class UserResponse(BaseModel):
-    email: EmailStr
-    username: str
-
-    class Config:
-        orm_mode = True
-
-
-class RandomRequest(BaseModel):
-    min: int
-    max: int
-
-
-# Dependency for database session
-def get_db() -> Session:
+# Dependency to get DB session
+def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
-
-# Endpoints
+# Server status route
 @app.get("/")
-async def status() -> dict:
-    return {
-        "exists": True,
-        "routes": [
-            {"path": "/", "method": "GET", "description": "Get server status"},
-            {
-                "path": "/register",
-                "method": "POST",
-                "description": "Register a new user",
-                "parameters": {"username": "string", "email": "string", "password": "string"},
-            },
-            {"path": "/users", "method": "GET", "description": "Get all registered users"},
-            {
-                "path": "/random",
-                "method": "POST",
-                "description": "Generate a random number",
-                "parameters": {"min": "int", "max": "int"},
-            },
-        ],
-    }
+async def read_root():
+    return {"message": "Welcome to the FastAPI server!",
+                "API Documentation":
+                    [{
+                        "path": "/",
+                        "method": "GET",
+                        "description": "Get server status"
+                    },
+                    {
+                        "path": "/register",
+                        "method": "POST",
+                        "description": "Register a new user",
+                        "parameters": {"username": "string", "email": "string"},
+                    },
+                    {
+                        "path": "/users",
+                        "method": "GET",
+                        "description": "Get all registered users",
+                    },
+                    {
+                        "path": "/random",
+                        "method": "POST",
+                        "description": "Generate a random number",
+                        "parameters": {"min": "int", "max": "int"},
+                    }
+                ]
+            }
 
 
-@app.post("/register", response_model=UserResponse, status_code=201)
-async def register_user(user: UserCreate, db: Session = Depends(get_db)) -> UserResponse:
-    if db.query(User).filter(User.email == user.email).first():
-        raise HTTPException(status_code=400, detail="Email is already registered")
-    new_user = User(username=user.username, email=user.email, password=user.password)
-    db.add(new_user)
+# Register new user route
+@app.post("/register")
+async def register(user: UserCreate, db: Session = Depends(get_db)):
+    # Check if email already exists
+    db_user = db.query(User).filter(User.email == user.email).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already in use")
+
+    # Create new user in the database
+    db_user = User(username=user.username, email=user.email, password=user.password)
+    db.add(db_user)
     db.commit()
-    db.refresh(new_user)
-    return new_user
+    db.refresh(db_user)
+    return {"user": db_user.id, "username": db_user.username, "email": db_user.email}
 
-
+# Get all users route
 @app.get("/users")
-async def list_users(db: Session = Depends(get_db)) -> dict:
+async def get_users(db: Session = Depends(get_db)):
     users = db.query(User).all()
-    return {"users": users}
+    print(users)
+    return users
 
-
+# Generate random number route
 @app.post("/random")
-async def random_number(req: RandomRequest) -> dict:
-    if req.min >= req.max:
+async def generate_random(min: int, max: int):
+    if min >= max:
         raise HTTPException(status_code=400, detail="min must be less than max")
-    return {"random_number": random.randint(req.min, req.max)}
+    random_number = random.randint(min, max)
+    return {"random_number": random_number}
+
