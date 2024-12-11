@@ -1,4 +1,6 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
@@ -7,6 +9,9 @@ import random
 
 # FastAPI app initialization
 app = FastAPI()
+
+# Jinja2 templates setup
+templates = Jinja2Templates(directory="templates")
 
 # Database setup (SQLite)
 SQLALCHEMY_DATABASE_URL = "sqlite:///./db.sqlite"
@@ -42,64 +47,46 @@ def get_db():
     finally:
         db.close()
 
-# Server status route
-@app.get("/")
-async def read_root():
-    return {"message": "Welcome to the FastAPI server!",
-                "API Documentation":
-                    [{
-                        "path": "/",
-                        "method": "GET",
-                        "description": "Get server status"
-                    },
-                    {
-                        "path": "/register",
-                        "method": "POST",
-                        "description": "Register a new user",
-                        "parameters": {"username": "string", "email": "string"},
-                    },
-                    {
-                        "path": "/users",
-                        "method": "GET",
-                        "description": "Get all registered users",
-                    },
-                    {
-                        "path": "/random",
-                        "method": "POST",
-                        "description": "Generate a random number",
-                        "parameters": {"min": "int", "max": "int"},
-                    }
-                ]
-            }
+# Server status route with HTML
+@app.get("/", response_class=HTMLResponse)
+async def read_root(request: Request):
+    return templates.TemplateResponse(
+        "home.html",
+        {"request": request, "message": "Welcome to the FastAPI server!"}
+    )
 
-
-# Register new user route
-@app.post("/register")
-async def register(user: UserCreate, db: Session = Depends(get_db)):
+# Register new user route with HTML
+@app.post("/register", response_class=HTMLResponse)
+async def register(user: UserCreate, request: Request, db: Session = Depends(get_db)):
     # Check if email already exists
     db_user = db.query(User).filter(User.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already in use")
 
-    # Create new user in the database
+    # Create a new user in the database
     db_user = User(username=user.username, email=user.email, password=user.password)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    return {"user": db_user.id, "username": db_user.username, "email": db_user.email}
+
+    return templates.TemplateResponse(
+        "register_success.html",
+        {"request": request, "username": db_user.username, "email": db_user.email}
+    )
 
 # Get all users route
-@app.get("/users")
-async def get_users(db: Session = Depends(get_db)):
+@app.get("/users", response_class=HTMLResponse)
+async def get_users(request: Request, db: Session = Depends(get_db)):
     users = db.query(User).all()
-    print(users)
-    return users
+    return templates.TemplateResponse("users.html", {"request": request, "users": users})
 
-# Generate random number route
-@app.post("/random")
-async def generate_random(min: int, max: int):
+# Generate random number route with HTML
+@app.post("/random", response_class=HTMLResponse)
+async def generate_random(min: int, max: int, request: Request):
     if min >= max:
         raise HTTPException(status_code=400, detail="min must be less than max")
     random_number = random.randint(min, max)
-    return {"random_number": random_number}
-
+    return templates.TemplateResponse(
+        "random.html",
+        {"request": request, "min": min, "max": max, "random_number": random_number}
+    )
